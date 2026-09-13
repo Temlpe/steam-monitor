@@ -1,0 +1,12 @@
+{
+  "1788652215": {
+    "channel": "stable",
+    "steamclient64.dll": "caba4826aa3501039d095aee1843a6bfb270fb43a3ab4455b2d6733223579fee",
+    "SteamUI.dll": "cb387adefbbac64a3c1490d4275d00daf3a1e0219b4580726ef7681db7429278"
+  },
+  "1789086785": {
+    "channel": "beta",
+    "steamclient64.dll": "78b1f41e23887767cd791bff63257d83f2a81599c5f0dabac1f36e1ed5a767e2",
+    "SteamUI.dll": "5a3afd9b15f0a2f4dbad332a28e6fc59db02efc85b1e0b33b246482e38e7428e"
+  }
+}

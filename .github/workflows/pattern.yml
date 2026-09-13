@@ -1,0 +1,120 @@
+name: Publish Pattern TOMLs
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pattern
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  pattern:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # default persist-credentials: Publish pushes via the built-in token.
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Fetch client binaries
+        id: fetch
+        run: |
+          sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+          PUBLISHED=$(ls pattern/steamclient/*.toml pattern/steamui/*.toml 2>/dev/null | xargs -r -n1 basename -s .toml | sort -u | tr '\n' ' ')
+          set +e
+          python3 tools/fetch_client.py --out bins/ --channels stable beta --published-shas $PUBLISHED --versions-file pattern/versions.json
+          CODE=$?
+          set -e
+          # exit 2 = all SHAs published: files still written, downstream skips.
+          if [ "$CODE" -eq 2 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$CODE" -ne 0 ]; then
+            exit "$CODE"
+          fi
+          CHANNELS=""
+          for channel in stable beta; do
+            if [ -f "bins/$channel/steamclient64.dll" ]; then
+              CHANNELS="$CHANNELS $channel"
+              echo "sha_sc_$channel=$(sha_of bins/$channel/steamclient64.dll)" >> "$GITHUB_OUTPUT"
+              echo "sha_sui_$channel=$(sha_of bins/$channel/SteamUI.dll)" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          echo "channels=$CHANNELS" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve patterns
+        id: resolve
+        if: steps.fetch.outputs.skip != 'true'
+        run: |
+          : > skips.txt
+          CODE_ALL=0
+          for channel in ${STEPS_FETCH_OUTPUTS_CHANNELS}; do
+            set +e
+            python3 tools/resolve_patterns.py resolve \
+              --dll "bins/$channel/steamclient64.dll" --side steamclient \
+              --out-dir pattern/ > "resolve_sc_$channel.log" 2>&1
+            CODE_SC=$?
+            python3 tools/resolve_patterns.py resolve \
+              --dll "bins/$channel/SteamUI.dll" --side steamui \
+              --out-dir pattern/ > "resolve_sui_$channel.log" 2>&1
+            CODE_SUI=$?
+            set -e
+            cat "resolve_sc_$channel.log" "resolve_sui_$channel.log"
+            grep -E '^FAIL ' "resolve_sc_$channel.log" "resolve_sui_$channel.log" >> skips.txt || true
+            if [ "$CODE_SC" -ne 0 ] || [ "$CODE_SUI" -ne 0 ]; then
+              CODE_ALL=1
+            fi
+          done
+          echo "code=$CODE_ALL" >> "$GITHUB_OUTPUT"
+        env:
+          STEPS_FETCH_OUTPUTS_CHANNELS: ${{ steps.fetch.outputs.channels }}
+
+      - name: File issue on unresolvable entries
+        if: steps.fetch.outputs.skip != 'true' && steps.resolve.outputs.code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_SC: ${{ steps.fetch.outputs.sha_sc_stable }}
+          STABLE_SUI: ${{ steps.fetch.outputs.sha_sui_stable }}
+          BETA_SC: ${{ steps.fetch.outputs.sha_sc_beta }}
+          BETA_SUI: ${{ steps.fetch.outputs.sha_sui_beta }}
+        run: |
+          {
+            echo "Full log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "Nothing was published (block-on-failure). Triage the skipped entries by hand, then re-run with workflow_dispatch."
+            echo ""
+            cat skips.txt
+          } > issue_body.md
+          gh issue create \
+            --title "Pattern resolve blocked: stable ${STABLE_SC}/${STABLE_SUI}, beta ${BETA_SC}/${BETA_SUI}" \
+            --body-file issue_body.md
+
+      - name: Publish
+        if: steps.fetch.outputs.skip != 'true' && steps.resolve.outputs.code == '0'
+        env:
+          # README timestamps render in runner-local time; pin UTC.
+          TZ: UTC
+        run: |
+          python3 -c "import json; print(json.dumps({'versions': json.load(open('pattern/versions.json'))}))" > /tmp/readme_data.json
+          npx -y knap@0.4.2 render templates/readme.md \
+            --data /tmp/readme_data.json --output README.md
+          ver() { python3 -c "import json; print(json.load(open('bins/$1/versions.json'))['version'])" 2>/dev/null || echo skipped; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pattern/ README.md
+          git commit -m "Update Steam rule patterns (stable $(ver stable), beta $(ver beta))"
+          git push
