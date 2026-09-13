@@ -55,6 +55,11 @@ name = "GetOrAddAppData"
 rva = "0x4C8F80"
 sig = "48 83 EC 58 48 8B 05 6D 15 CC 00 48 89 5C 24 68 48 89 6C 24 70 41 0F B6"
 
+[0x3B3A0F9D]
+name = "GetPackageInfo"
+rva = "0x4C9220"
+sig = "48 89 5C 24 18 89 54 24 10 55 56 57 48 83 EC 20 44 8B 49 20 49 8B F0 8B"
+
 [0x02DF23BC]
 name = "GetPipeClient"
 rva = "0x89DAA0"
