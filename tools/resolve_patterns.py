@@ -91,6 +91,9 @@ CC_STR = "CCMInterface::ConnectCompleted()"
 GROW_PREFIX = bytes.fromhex(
     "48 89 5C 24 10 57 48 83 EC 30 8B FA 48 8B D9 8B 51 08 8B 49 10 "
     "8D 04 39 3B C2 0F 8E")
+# GetPackageInfo prologue (20B, disp-free).
+GPI_PREFIX = bytes.fromhex(
+    "48 89 5C 24 18 89 54 24 10 55 56 57 48 83 EC 20 44 8B 49 20")
 
 
 def _only(cands, what):
@@ -368,6 +371,15 @@ def p2_scb(ctx):
     if len(refs) != 1:
         return None, f"{len(refs)} SCB referrers"
     return _only(set(ctx.callees(next(iter(refs)))), "SendCallback cands")
+
+
+def p2_getpackageinfo(ctx):
+    img = ctx.img
+    n = len(GPI_PREFIX)
+    match = [en for en in ctx.entries
+             if img.rva2off(en)
+             and bytes(img.buf[img.rva2off(en):img.rva2off(en) + n]) == GPI_PREFIX]
+    return _only(match, "GetPackageInfo cands")
 
 
 def fnv1a(s: str) -> int:
@@ -793,6 +805,7 @@ def resolve(ctx: Ctx, side: str):
             emit("BuildDepotDependency", bd, None)
             emit("CheckAppOwnership", *p2_checkapp(ctx, cm))
         emit("SendCallbackToPipe", *p2_scb(ctx))
+        emit("GetPackageInfo", *p2_getpackageinfo(ctx))
     return found, failed
 
 

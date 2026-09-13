@@ -289,5 +289,34 @@ class TestSteamUiPickers(unittest.TestCase):
         self.assertEqual(rp.p2_rf32(ctx, 0xF), (t, None))
 
 
+class TestGetPackageInfo(unittest.TestCase):
+    HOOK, DECOY = 0x4C9220, 0x4C9000
+
+    def _ctx(self, bodies):
+        img = Img()
+        for rva, body in bodies:
+            img.put(rva, body)
+        return mkctx(entries=[r for r, _ in bodies], img=img)
+
+    def test_unique_prologue_wins(self):
+        good = rp.GPI_PREFIX + b"\x44\x8b\x49\x20" + b"\x90" * 32
+        decoy = b"\x48\x89\x5c\x24\x19" + rp.GPI_PREFIX[5:] + b"\x90" * 32
+        ctx = self._ctx([(self.DECOY, decoy), (self.HOOK, good)])
+        self.assertEqual(rp.p2_getpackageinfo(ctx), (self.HOOK, None))
+
+    def test_no_prologue_fails(self):
+        ctx = self._ctx([(self.HOOK, b"\x90" * 64)])
+        v, e = rp.p2_getpackageinfo(ctx)
+        self.assertIsNone(v)
+        self.assertIn("0 GetPackageInfo cands", e)
+
+    def test_double_prologue_fails(self):
+        good = rp.GPI_PREFIX + b"\x90" * 32
+        ctx = self._ctx([(self.HOOK, good), (self.DECOY, good)])
+        v, e = rp.p2_getpackageinfo(ctx)
+        self.assertIsNone(v)
+        self.assertIn("2 GetPackageInfo cands", e)
+
+
 if __name__ == "__main__":
     unittest.main()

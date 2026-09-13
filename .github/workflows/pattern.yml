@@ -35,7 +35,17 @@ jobs:
         id: fetch
         run: |
           sha_of() { sha256sum "$1" | cut -d' ' -f1; }
-          PUBLISHED=$(ls pattern/steamclient/*.toml pattern/steamui/*.toml 2>/dev/null | xargs -r -n1 basename -s .toml | sort -u | tr '\n' ' ')
+          PUBLISHED=$(ls pattern/steamui/*.toml 2>/dev/null | xargs -r -n1 basename -s .toml | sort -u | tr '\n' ' ')
+          for f in pattern/steamclient/*.toml; do
+            [ -e "$f" ] || continue
+            sha=$(basename -s .toml "$f")
+            # A steamclient build counts as published only with its IPC file:
+            # otherwise the old 24-entry set would mask the missing ipc/ TOML
+            # and fetch would keep reporting "already published".
+            if [ -f "ipc/steamclient/$sha.toml" ]; then
+              PUBLISHED="$PUBLISHED $sha"
+            fi
+          done
           set +e
           python3 tools/fetch_client.py --out bins/ --channels stable beta --published-shas $PUBLISHED --versions-file pattern/versions.json
           CODE=$?
@@ -56,7 +66,7 @@ jobs:
           done
           echo "channels=$CHANNELS" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve patterns
+      - name: Resolve patterns + IPC
         id: resolve
         if: steps.fetch.outputs.skip != 'true'
         run: |
@@ -72,10 +82,14 @@ jobs:
               --dll "bins/$channel/SteamUI.dll" --side steamui \
               --out-dir pattern/ > "resolve_sui_$channel.log" 2>&1
             CODE_SUI=$?
+            python3 tools/resolve_ipc.py resolve \
+              --dll "bins/$channel/steamclient64.dll" \
+              --out-dir ipc/ > "resolve_ipc_$channel.log" 2>&1
+            CODE_IPC=$?
             set -e
-            cat "resolve_sc_$channel.log" "resolve_sui_$channel.log"
-            grep -E '^FAIL ' "resolve_sc_$channel.log" "resolve_sui_$channel.log" >> skips.txt || true
-            if [ "$CODE_SC" -ne 0 ] || [ "$CODE_SUI" -ne 0 ]; then
+            cat "resolve_sc_$channel.log" "resolve_sui_$channel.log" "resolve_ipc_$channel.log"
+            grep -E '^FAIL ' "resolve_sc_$channel.log" "resolve_sui_$channel.log" "resolve_ipc_$channel.log" >> skips.txt || true
+            if [ "$CODE_SC" -ne 0 ] || [ "$CODE_SUI" -ne 0 ] || [ "$CODE_IPC" -ne 0 ]; then
               CODE_ALL=1
             fi
           done
@@ -115,6 +129,6 @@ jobs:
           ver() { python3 -c "import json; print(json.load(open('bins/$1/versions.json'))['version'])" 2>/dev/null || echo skipped; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pattern/ README.md
+          git add pattern/ ipc/ README.md
           git commit -m "Update Steam rule patterns (stable $(ver stable), beta $(ver beta))"
           git push
